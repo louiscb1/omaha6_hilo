@@ -1,5 +1,8 @@
 import streamlit as st
 import random
+import pandas as pd
+import io
+from datetime import datetime
 from card_utils import create_deck, shuffle_deck, deal_cards
 from hand_evaluator import evaluate_high_hand, evaluate_low_hand
 from itertools import combinations
@@ -42,6 +45,7 @@ def run_simulation(player_hands_input, board_input, num_sims):
     high_wins = [0 for _ in range(NUM_PLAYERS)]
     low_wins = [0 for _ in range(NUM_PLAYERS)]
     scoops = [0 for _ in range(NUM_PLAYERS)]
+    example_board = None
 
     for sim in tqdm(range(num_sims)):
         deck = create_deck()
@@ -69,6 +73,7 @@ def run_simulation(player_hands_input, board_input, num_sims):
 
         if sim == 0:
             check_for_duplicate_cards(player_hands, board)
+            example_board = board.copy()
 
         # Evaluate hands
         high_scores = []
@@ -119,7 +124,7 @@ def run_simulation(player_hands_input, board_input, num_sims):
                high_scores.count(max_high) == 1 and low_scores.count(min_low) == 1:
                 scoops[i] += 1
 
-    return high_wins, low_wins, scoops
+    return high_wins, low_wins, scoops, example_board
 
 # Streamlit UI
 st.set_page_config(page_title="Omaha 6 Hi/Lo Equity Calculator", page_icon="🃏")
@@ -137,7 +142,7 @@ st.markdown(
 ranks = "23456789TJQKA"
 suits = "cdhs"
 deck = [r + s for r in ranks for s in suits]
-deck.insert(0, "")  # Empty option to allow unselected slots
+deck.insert(0, "")  # Empty option
 
 # Session state for Player hands
 if "p1_cards" not in st.session_state:
@@ -216,7 +221,7 @@ if run_clicked:
 
         # Run simulation
         with st.spinner("Running simulations..."):
-            high_wins, low_wins, scoops = run_simulation(player_hands_input, board_input, num_sims)
+            high_wins, low_wins, scoops, example_board = run_simulation(player_hands_input, board_input, num_sims)
 
         # Display results
         st.subheader("Results")
@@ -225,5 +230,44 @@ if run_clicked:
             st.write(f"High wins: {100 * high_wins[i] / num_sims:.2f}%")
             st.write(f"Low wins: {100 * low_wins[i] / num_sims:.2f}%")
             st.write(f"Scoops:    {100 * scoops[i] / num_sims:.2f}%")
+
+        # Show example board
+        st.subheader("Example Board from Simulation")
+        st.write(" ".join(example_board))
+
+        # Prepare CSV data
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        player1_hand_str = " ".join(parse_hand_dropdowns(st.session_state.p1_cards))
+        player2_hand_str = " ".join(parse_hand_dropdowns(st.session_state.p2_cards))
+
+        data = {
+            "Timestamp": [timestamp],
+            "Player 1 Hand": [player1_hand_str],
+            "Player 2 Hand": [player2_hand_str],
+            "Board": [board_str],
+            "Number of Simulations": [num_sims],
+            "P1 High Wins %": [100 * high_wins[0] / num_sims],
+            "P1 Low Wins %": [100 * low_wins[0] / num_sims],
+            "P1 Scoops %": [100 * scoops[0] / num_sims],
+            "P2 High Wins %": [100 * high_wins[1] / num_sims],
+            "P2 Low Wins %": [100 * low_wins[1] / num_sims],
+            "P2 Scoops %": [100 * scoops[1] / num_sims],
+        }
+
+        df = pd.DataFrame(data)
+
+        # Convert to CSV
+        csv_buffer = io.StringIO()
+        df.to_csv(csv_buffer, index=False)
+        csv_data = csv_buffer.getvalue()
+
+        # Download button
+        st.download_button(
+            label="📥 Save Results to CSV",
+            data=csv_data,
+            file_name=f"omaha6_hilo_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
+
     except Exception as e:
         st.error(f"Error: {e}")
