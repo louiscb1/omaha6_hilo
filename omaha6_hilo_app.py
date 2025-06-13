@@ -1,87 +1,69 @@
 import streamlit as st
-import random
-import pandas as pd
-import io
-from datetime import datetime
 from card_utils import create_deck, shuffle_deck, deal_cards
 from hand_evaluator import evaluate_high_hand, evaluate_low_hand
 from itertools import combinations
-from tqdm import tqdm
+import pandas as pd
+import io
+from datetime import datetime
 
 # Helper functions
 def parse_hand_dropdowns(selected_cards):
     return [card for card in selected_cards if card != ""]
 
-def parse_board_string(board_str):
-    valid_ranks = "23456789TJQKA"
-    valid_suits = "cdhs"
-    board_str = board_str.strip()
-    if board_str.lower() == "none" or board_str == "":
-        return []
-    cards = [board_str[i:i+2] for i in range(0, len(board_str), 2)]
-    if len(cards) > 5:
-        raise ValueError("Board can have at most 5 cards.")
-    for card in cards:
-        if len(card) != 2 or card[0] not in valid_ranks or card[1] not in valid_suits:
-            raise ValueError(f"Invalid board card format: '{card}'")
-    return cards
+def parse_board_dropdowns(selected_cards):
+    return [card for card in selected_cards if card != ""]
 
-def check_for_duplicate_cards(all_player_hands, board_cards):
-    seen = set()
-    for hand in all_player_hands:
-        if hand is None:
-            continue
-        for card in hand:
-            if card in seen:
-                raise ValueError(f"Duplicate card detected: {card}")
-            seen.add(card)
-    for card in board_cards:
-        if card in seen:
-            raise ValueError(f"Duplicate card detected between player hands and board: {card}")
-        seen.add(card)
+def suit_to_emoji(card):
+    suit = card[1]
+    suit_map = {
+        's': '♠',
+        'h': '♥',
+        'd': '♦',
+        'c': '♣'
+    }
+    return card[0] + suit_map.get(suit, '')
 
-def run_simulation(player_hands_input, board_input, num_sims):
-    NUM_PLAYERS = 2
-    high_wins = [0 for _ in range(NUM_PLAYERS)]
-    low_wins = [0 for _ in range(NUM_PLAYERS)]
-    scoops = [0 for _ in range(NUM_PLAYERS)]
-    example_board = None
+def get_available_cards(selected_cards):
+    all_ranks = "23456789TJQKA"
+    all_suits = "shdc"
+    full_deck = [r + s for r in all_ranks for s in all_suits]
+    return [""] + [card for card in full_deck if card not in selected_cards]
 
-    for sim in tqdm(range(num_sims)):
+# Run Simulation function
+def run_simulation(player_hands_input, board, num_simulations):
+    high_wins = [0, 0]
+    low_wins = [0, 0]
+    scoops = [0, 0]
+
+    example_board = []
+
+    for _ in range(num_simulations):
         deck = create_deck()
+
+        # Remove known player cards and board cards from deck
+        for card in player_hands_input[0] + player_hands_input[1] + board:
+            if card in deck:
+                deck.remove(card)
+
         shuffle_deck(deck)
 
-        # Deal player hands
-        player_hands = []
-        for i in range(NUM_PLAYERS):
-            if player_hands_input[i]:
-                hand = player_hands_input[i]
-                for card in hand:
-                    deck.remove(card)
-                player_hands.append(hand)
-            else:
-                player_hand = deal_cards(deck, 6)
-                player_hands.append(player_hand)
-
-        # Prepare board
-        board = board_input.copy()
-        for card in board:
-            deck.remove(card)
+        # Complete the board
         num_to_deal = 5 - len(board)
+        sim_board = board.copy()
         if num_to_deal > 0:
-            board += deal_cards(deck, num_to_deal)
+            sim_board += deal_cards(deck, num_to_deal)
 
-        if sim == 0:
-            check_for_duplicate_cards(player_hands, board)
-            example_board = board.copy()
+        if not example_board:
+            example_board = sim_board.copy()
 
-        # Evaluate hands
         high_scores = []
         low_scores = []
 
-        for player_hand in player_hands:
+        for player_hand in player_hands_input:
+            # All combos of 2 hole cards
             hole_combos = combinations(player_hand, 2)
-            board_combos = combinations(board, 3)
+            # All combos of 3 board cards
+            board_combos = combinations(sim_board, 3)
 
             best_high = None
             best_low = None
@@ -90,11 +72,10 @@ def run_simulation(player_hands_input, board_input, num_sims):
                 for board3 in board_combos:
                     full_hand = list(hole) + list(board3)
                     high_score = evaluate_high_hand(full_hand)
-                    low_score = evaluate_low_hand(full_hand, board)
+                    low_score = evaluate_low_hand(full_hand, sim_board)
 
                     if (best_high is None) or (high_score > best_high):
                         best_high = high_score
-
                     if low_score is not None:
                         if (best_low is None) or (low_score < best_low):
                             best_low = low_score
@@ -108,59 +89,35 @@ def run_simulation(player_hands_input, board_input, num_sims):
         for w in high_winners:
             high_wins[w] += 1 / len(high_winners)
 
-        # Determine Low winner
+        # Determine Low winner (if any Low)
         valid_lows = [score for score in low_scores if score is not None]
-        min_low = None
         if valid_lows:
             min_low = min(valid_lows)
             low_winners = [i for i, score in enumerate(low_scores) if score == min_low]
             for w in low_winners:
                 low_wins[w] += 1 / len(low_winners)
 
-        # Determine scoops
-        for i in range(NUM_PLAYERS):
-            if min_low is not None and \
-               high_scores[i] == max_high and low_scores[i] == min_low and \
-               high_scores.count(max_high) == 1 and low_scores.count(min_low) == 1:
+        # Determine scoops (player who wins both High and Low alone)
+        for i in range(2):
+            if high_scores[i] == max_high and (low_scores[i] == min_low if valid_lows else True) and \
+               high_scores.count(max_high) == 1 and (low_scores.count(min_low) == 1 if valid_lows else True):
                 scoops[i] += 1
 
     return high_wins, low_wins, scoops, example_board
 
 # Streamlit UI
-st.set_page_config(page_title="Omaha 6 Hi/Lo Equity Calculator", page_icon="🃏")
+st.title("Omaha 6 HiLo Equity Calculator (PRO)")
 
-st.title("🃏 Omaha 6 Hi/Lo Equity Calculator")
-st.markdown(
-    """
-    Select two 6-card Omaha hands and an optional partial board.  
-    Choose number of simulations and run the calculator.  
-    Results will show High %, Low %, and Scoops % for each player.
-    """
-)
-
-# Prepare card list
-ranks = "23456789TJQKA"
-suits = "cdhs"
-deck = [r + s for r in ranks for s in suits]
-deck.insert(0, "")  # Empty option
-
-# Session state for Player hands
+# Player 1 Hand
+st.header("Player 1 Hand")
 if "p1_cards" not in st.session_state:
     st.session_state.p1_cards = [""] * 6
-if "p2_cards" not in st.session_state:
-    st.session_state.p2_cards = [""] * 6
 
-# Smart dropdown filtering
-def get_available_cards(exclude_cards):
-    return [card for card in deck if card not in exclude_cards]
-
-# Player 1
-st.header("Player 1 Hand")
-cols1 = st.columns(6)
+cols_p1 = st.columns(6)
 p1_selected = []
 for i in range(6):
-    available_cards = get_available_cards(p1_selected + st.session_state.p2_cards)
-    st.session_state.p1_cards[i] = cols1[i].selectbox(
+    available_cards = get_available_cards(p1_selected + st.session_state.p2_cards + parse_board_dropdowns(st.session_state.board_cards) if "board_cards" in st.session_state else [])
+    st.session_state.p1_cards[i] = cols_p1[i].selectbox(
         f"P1 Card {i+1}",
         available_cards,
         index=available_cards.index(st.session_state.p1_cards[i]) if st.session_state.p1_cards[i] in available_cards else 0
@@ -168,17 +125,16 @@ for i in range(6):
     if st.session_state.p1_cards[i] != "":
         p1_selected.append(st.session_state.p1_cards[i])
 
-if st.button("🎲 Randomize Player 1 Hand"):
-    st.session_state.p1_cards = random.sample(deck[1:], 6)
-    st.experimental_rerun()
-
-# Player 2
+# Player 2 Hand
 st.header("Player 2 Hand")
-cols2 = st.columns(6)
+if "p2_cards" not in st.session_state:
+    st.session_state.p2_cards = [""] * 6
+
+cols_p2 = st.columns(6)
 p2_selected = []
 for i in range(6):
-    available_cards = get_available_cards(p2_selected + st.session_state.p1_cards)
-    st.session_state.p2_cards[i] = cols2[i].selectbox(
+    available_cards = get_available_cards(p2_selected + st.session_state.p1_cards + parse_board_dropdowns(st.session_state.board_cards) if "board_cards" in st.session_state else [])
+    st.session_state.p2_cards[i] = cols_p2[i].selectbox(
         f"P2 Card {i+1}",
         available_cards,
         index=available_cards.index(st.session_state.p2_cards[i]) if st.session_state.p2_cards[i] in available_cards else 0
@@ -186,24 +142,46 @@ for i in range(6):
     if st.session_state.p2_cards[i] != "":
         p2_selected.append(st.session_state.p2_cards[i])
 
-if st.button("🎲 Randomize Player 2 Hand"):
-    st.session_state.p2_cards = random.sample(deck[1:], 6)
-    st.experimental_rerun()
-
-# Board + Run
+# Board input — Safe smart dropdowns
 st.header("Board")
-board_str = st.text_input("Partial Board (optional, e.g. Ah2s3c)", value="")
+if "board_cards" not in st.session_state:
+    st.session_state.board_cards = [""] * 5
 
-num_sims = st.slider("Number of Simulations", min_value=1000, max_value=500_000, value=100_000, step=1000)
+cols_board = st.columns(5)
+board_selected = []
+for i in range(5):
+    available_cards = get_available_cards(board_selected + st.session_state.p1_cards + st.session_state.p2_cards)
+    st.session_state.board_cards[i] = cols_board[i].selectbox(
+        f"Board Card {i+1}",
+        available_cards,
+        index=available_cards.index(st.session_state.board_cards[i]) if st.session_state.board_cards[i] in available_cards else 0
+    )
+    if st.session_state.board_cards[i] != "":
+        board_selected.append(st.session_state.board_cards[i])
 
-run_clicked = st.button("🚀 Run Simulation")
-reset_clicked = st.button("🔄 Reset Inputs")
+# Check valid board input
+valid_board_input = len(board_selected) in [0, 3]
+
+# Show warning if invalid
+if not valid_board_input:
+    st.warning("Please select either 0 cards or exactly 3 board cards for runout simulation.")
+
+# Simulation Settings
+st.header("Simulation Settings")
+num_sims = st.number_input("Number of Simulations", min_value=100, max_value=1000000, value=10000, step=1000)
+
+# Run button — only enabled if valid input
+run_clicked = st.button("Run Simulation", disabled=not valid_board_input)
+
+# Reset button
+reset_clicked = st.button("Reset Inputs")
 
 if reset_clicked:
     st.session_state.p1_cards = [""] * 6
     st.session_state.p2_cards = [""] * 6
-    st.experimental_rerun()
+    st.session_state.board_cards = [""] * 5
 
+# Run Simulation
 if run_clicked:
     try:
         # Parse hands
@@ -217,7 +195,9 @@ if run_clicked:
             if len(hand) not in [0, 6]:
                 raise ValueError("Each player hand must be either empty or exactly 6 unique cards.")
 
-        board_input = parse_board_string(board_str)
+        # Parse Board
+        board_input = parse_board_dropdowns(st.session_state.board_cards)
+        board_str = " ".join(board_input)
 
         # Run simulation
         with st.spinner("Running simulations..."):
@@ -233,13 +213,13 @@ if run_clicked:
 
         # Show example board
         st.subheader("Example Board from Simulation")
-        st.write(" ".join(example_board))
+        st.write(" ".join([suit_to_emoji(card) for card in example_board]))
 
         # Prepare CSV data
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         player1_hand_str = " ".join(parse_hand_dropdowns(st.session_state.p1_cards))
         player2_hand_str = " ".join(parse_hand_dropdowns(st.session_state.p2_cards))
 
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data = {
             "Timestamp": [timestamp],
             "Player 1 Hand": [player1_hand_str],
@@ -271,3 +251,4 @@ if run_clicked:
 
     except Exception as e:
         st.error(f"Error: {e}")
+
