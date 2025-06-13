@@ -17,28 +17,21 @@ def evaluate_high_hand(cards):
     return -score  # We negate it so HIGHER is better in our simulator!
 
 # Returns Low hand score or None if no Low
-def evaluate_low_hand(cards):
-    # Map rank characters to numerical values (Ace = 1)
-    rank_map = {'2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
-                '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 1}
-
-    # Extract the ranks of the 5 cards
-    ranks = [rank_map[card[0]] for card in cards]
-
-    # Filter for cards <= 8
-    low_cards = sorted(set([r for r in ranks if r <= 8]))
-
-    # If fewer than 5 unique low cards → no Low
-    if len(low_cards) < 5:
+def evaluate_low_hand(cards, board_cards):
+    # First check board — must have at least 3 distinct low ranks (8 or lower)
+    board_low_ranks = set(card[0] for card in board_cards if card[0] in "2345678")
+    if len(board_low_ranks) < 3:
+        return None  # No low possible on this board
+    
+    # Now check player hand + board combo
+    low_cards = [card for card in cards if card[0] in "2345678"]
+    low_ranks = sorted(set(card[0] for card in low_cards), key=lambda x: "A2345678".index(x))
+    
+    if len(low_ranks) >= 5:
+        # Return numeric score of low — e.g. A2345 = 12345, 23456 = 23456, etc
+        rank_to_value = {'A': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8}
+        score = int("".join(str(rank_to_value[r]) for r in low_ranks[:5]))
+        return score
+    else:
         return None
 
-    # Use the lowest 5 unique low cards
-    five_low = low_cards[:5]
-
-    # Lexicographical score: smaller is better
-    # Example: A2345 → 102030405
-    score = 0
-    for r in five_low:
-        score = score * 100 + r
-
-    return score

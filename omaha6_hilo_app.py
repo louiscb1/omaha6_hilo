@@ -90,7 +90,7 @@ def run_simulation(player_hands_input, board_input, num_sims):
                 for board3 in board_combos:
                     full_hand = list(hole) + list(board3)
                     high_score = evaluate_high_hand(full_hand)
-                    low_score = evaluate_low_hand(full_hand)
+                    low_score = evaluate_low_hand(full_hand, board)
 
                     if (best_high is None) or (high_score > best_high):
                         best_high = high_score
