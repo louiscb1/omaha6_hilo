@@ -5,6 +5,7 @@ from itertools import combinations
 import pandas as pd
 import io
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 # Helper functions
 def parse_hand_dropdowns(selected_cards):
@@ -29,11 +30,13 @@ def get_available_cards(selected_cards):
     full_deck = [r + s for r in all_ranks for s in all_suits]
     return [""] + [card for card in full_deck if card not in selected_cards]
 
-# Run Simulation function
 def run_simulation(player_hands_input, board, num_simulations):
     high_wins = [0, 0]
     low_wins = [0, 0]
     scoops = [0, 0]
+
+    split_pots = 0
+    seventyfive_pcts = [0, 0]
 
     example_board = []
 
@@ -103,7 +106,24 @@ def run_simulation(player_hands_input, board, num_simulations):
                high_scores.count(max_high) == 1 and (low_scores.count(min_low) == 1 if valid_lows else True):
                 scoops[i] += 1
 
-    return high_wins, low_wins, scoops, example_board
+        # Determine Split Pot (P1 High and P2 Low) OR (P2 High and P1 Low)
+        if valid_lows:
+            if len(high_winners) == 1 and len(low_winners) == 1:
+                if (high_winners[0] == 0 and low_winners[0] == 1) or (high_winners[0] == 1 and low_winners[0] == 0):
+                    split_pots += 1
+
+        # Correct 75% win logic:
+
+        # Case 1: High won alone, Low split → winner of High gets 75%
+        if valid_lows and len(high_winners) == 1 and len(low_winners) > 1:
+            seventyfive_pcts[high_winners[0]] += 1
+
+        # Case 2: High split, Low won alone → winner of Low gets 75%
+        if valid_lows and len(high_winners) > 1 and len(low_winners) == 1:
+            seventyfive_pcts[low_winners[0]] += 1
+
+    return high_wins, low_wins, scoops, example_board, split_pots, seventyfive_pcts
+
 
 # Streamlit UI
 st.title("Omaha 6 HiLo Equity Calculator (PRO)")
@@ -142,14 +162,14 @@ for i in range(6):
     if st.session_state.p2_cards[i] != "":
         p2_selected.append(st.session_state.p2_cards[i])
 
-# Board input — Safe smart dropdowns
+# Board input — Safe smart dropdowns (ONLY Board Card 1-3 shown!)
 st.header("Board")
 if "board_cards" not in st.session_state:
-    st.session_state.board_cards = [""] * 5
+    st.session_state.board_cards = [""] * 5  # Keep full list for engine compatibility
 
-cols_board = st.columns(5)
+cols_board = st.columns(3)
 board_selected = []
-for i in range(5):
+for i in range(3):  # Only show first 3 cards in UI
     available_cards = get_available_cards(board_selected + st.session_state.p1_cards + st.session_state.p2_cards)
     st.session_state.board_cards[i] = cols_board[i].selectbox(
         f"Board Card {i+1}",
@@ -180,7 +200,6 @@ if reset_clicked:
     st.session_state.p1_cards = [""] * 6
     st.session_state.p2_cards = [""] * 6
     st.session_state.board_cards = [""] * 5
-
 # Run Simulation
 if run_clicked:
     try:
@@ -201,7 +220,7 @@ if run_clicked:
 
         # Run simulation
         with st.spinner("Running simulations..."):
-            high_wins, low_wins, scoops, example_board = run_simulation(player_hands_input, board_input, num_sims)
+            high_wins, low_wins, scoops, example_board, split_pots, seventyfive_pcts = run_simulation(player_hands_input, board_input, num_sims)
 
         # Display results
         st.subheader("Results")
@@ -210,6 +229,35 @@ if run_clicked:
             st.write(f"High wins: {100 * high_wins[i] / num_sims:.2f}%")
             st.write(f"Low wins: {100 * low_wins[i] / num_sims:.2f}%")
             st.write(f"Scoops:    {100 * scoops[i] / num_sims:.2f}%")
+
+        # Display Split Pot %
+        split_pct = 100 * split_pots / num_sims
+        st.write(f"**Split Pot** (P1 wins High & P2 wins Low OR vice versa): {split_pct:.2f}%")
+
+        # Display 75% wins
+        for i in range(2):
+            st.write(f"**Player {i+1} wins 75% of pot:** {100 * seventyfive_pcts[i] / num_sims:.2f}%")
+
+        # Display bar chart of results
+        st.subheader("Results Bar Chart")
+        labels = ["High Wins", "Low Wins", "Scoops"]
+        p1_values = [100 * high_wins[0] / num_sims, 100 * low_wins[0] / num_sims, 100 * scoops[0] / num_sims]
+        p2_values = [100 * high_wins[1] / num_sims, 100 * low_wins[1] / num_sims, 100 * scoops[1] / num_sims]
+
+        x = range(len(labels))
+        width = 0.35
+
+        fig, ax = plt.subplots()
+        ax.bar([i - width/2 for i in x], p1_values, width, label='Player 1')
+        ax.bar([i + width/2 for i in x], p2_values, width, label='Player 2')
+
+        ax.set_ylabel('Percentage (%)')
+        ax.set_title('Simulation Results')
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels)
+        ax.legend()
+
+        st.pyplot(fig)
 
         # Show example board
         st.subheader("Example Board from Simulation")
@@ -229,9 +277,12 @@ if run_clicked:
             "P1 High Wins %": [100 * high_wins[0] / num_sims],
             "P1 Low Wins %": [100 * low_wins[0] / num_sims],
             "P1 Scoops %": [100 * scoops[0] / num_sims],
+            "P1 75% Wins %": [100 * seventyfive_pcts[0] / num_sims],
             "P2 High Wins %": [100 * high_wins[1] / num_sims],
             "P2 Low Wins %": [100 * low_wins[1] / num_sims],
             "P2 Scoops %": [100 * scoops[1] / num_sims],
+            "P2 75% Wins %": [100 * seventyfive_pcts[1] / num_sims],
+            "Split Pot %": [split_pct],
         }
 
         df = pd.DataFrame(data)
@@ -251,4 +302,3 @@ if run_clicked:
 
     except Exception as e:
         st.error(f"Error: {e}")
-
