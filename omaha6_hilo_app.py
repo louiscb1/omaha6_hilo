@@ -30,6 +30,7 @@ def get_available_cards(selected_cards):
     full_deck = [r + s for r in all_ranks for s in all_suits]
     return [""] + [card for card in full_deck if card not in selected_cards]
 
+# Run Simulation function — TRUE 75% calculation
 def run_simulation(player_hands_input, board, num_simulations):
     high_wins = [0, 0]
     low_wins = [0, 0]
@@ -112,18 +113,29 @@ def run_simulation(player_hands_input, board, num_simulations):
                 if (high_winners[0] == 0 and low_winners[0] == 1) or (high_winners[0] == 1 and low_winners[0] == 0):
                     split_pots += 1
 
-        # Correct 75% win logic:
+        # TRUE 75% calculation:
 
-        # Case 1: High won alone, Low split → winner of High gets 75%
-        if valid_lows and len(high_winners) == 1 and len(low_winners) > 1:
-            seventyfive_pcts[high_winners[0]] += 1
+        # High pot share
+        high_pot_share = [0.0, 0.0]
+        if len(high_winners) > 0:
+            share = 1.0 / len(high_winners)
+            for w in high_winners:
+                high_pot_share[w] = share
 
-        # Case 2: High split, Low won alone → winner of Low gets 75%
-        if valid_lows and len(high_winners) > 1 and len(low_winners) == 1:
-            seventyfive_pcts[low_winners[0]] += 1
+        # Low pot share
+        low_pot_share = [0.0, 0.0]
+        if valid_lows and len(low_winners) > 0:
+            share = 1.0 / len(low_winners)
+            for w in low_winners:
+                low_pot_share[w] = share
+
+        # Check 75% pot share per player
+        for i in range(2):
+            total_pot_share = high_pot_share[i] + low_pot_share[i]
+            if abs(total_pot_share - 0.75) < 1e-6:
+                seventyfive_pcts[i] += 1
 
     return high_wins, low_wins, scoops, example_board, split_pots, seventyfive_pcts
-
 
 # Streamlit UI
 st.title("Omaha 6 HiLo Equity Calculator (PRO)")
@@ -234,7 +246,7 @@ if run_clicked:
         split_pct = 100 * split_pots / num_sims
         st.write(f"**Split Pot** (P1 wins High & P2 wins Low OR vice versa): {split_pct:.2f}%")
 
-        # Display 75% wins
+        # Display TRUE 75% wins
         for i in range(2):
             st.write(f"**Player {i+1} wins 75% of pot:** {100 * seventyfive_pcts[i] / num_sims:.2f}%")
 
