@@ -6,19 +6,8 @@ from itertools import combinations
 from tqdm import tqdm
 
 # Helper functions
-def parse_hand_string(hand_str):
-    valid_ranks = "23456789TJQKA"
-    valid_suits = "cdhs"
-    hand_str = hand_str.strip()
-    if hand_str.lower() == "none" or hand_str == "":
-        return None
-    cards = [hand_str[i:i+2] for i in range(0, len(hand_str), 2)]
-    if len(cards) != 6:
-        raise ValueError("Each Omaha 6 hand must have exactly 6 cards (12 characters).")
-    for card in cards:
-        if len(card) != 2 or card[0] not in valid_ranks or card[1] not in valid_suits:
-            raise ValueError(f"Invalid card format: '{card}'")
-    return cards
+def parse_hand_dropdowns(selected_cards):
+    return [card for card in selected_cards if card != ""]
 
 def parse_board_string(board_str):
     valid_ranks = "23456789TJQKA"
@@ -48,7 +37,6 @@ def check_for_duplicate_cards(all_player_hands, board_cards):
             raise ValueError(f"Duplicate card detected between player hands and board: {card}")
         seen.add(card)
 
-# Main simulation function
 def run_simulation(player_hands_input, board_input, num_sims):
     NUM_PLAYERS = 2
     high_wins = [0 for _ in range(NUM_PLAYERS)]
@@ -62,7 +50,7 @@ def run_simulation(player_hands_input, board_input, num_sims):
         # Deal player hands
         player_hands = []
         for i in range(NUM_PLAYERS):
-            if player_hands_input[i] is not None:
+            if player_hands_input[i]:
                 hand = player_hands_input[i]
                 for card in hand:
                     deck.remove(card)
@@ -131,25 +119,99 @@ def run_simulation(player_hands_input, board_input, num_sims):
                high_scores.count(max_high) == 1 and low_scores.count(min_low) == 1:
                 scoops[i] += 1
 
-    # Return results
     return high_wins, low_wins, scoops
 
 # Streamlit UI
-st.title("Omaha 6 Hi/Lo Equity Calculator (2 players)")
+st.set_page_config(page_title="Omaha 6 Hi/Lo Equity Calculator", page_icon="🃏")
 
-player1_hand_str = st.text_input("Player 1 Hand (e.g. Ah2s3c4d5h6h)", value="Ah2s3c4d5h6h")
-player2_hand_str = st.text_input("Player 2 Hand (e.g. None)", value="None")
+st.title("🃏 Omaha 6 Hi/Lo Equity Calculator")
+st.markdown(
+    """
+    Select two 6-card Omaha hands and an optional partial board.  
+    Choose number of simulations and run the calculator.  
+    Results will show High %, Low %, and Scoops % for each player.
+    """
+)
+
+# Prepare card list
+ranks = "23456789TJQKA"
+suits = "cdhs"
+deck = [r + s for r in ranks for s in suits]
+deck.insert(0, "")  # Empty option to allow unselected slots
+
+# Session state for Player hands
+if "p1_cards" not in st.session_state:
+    st.session_state.p1_cards = [""] * 6
+if "p2_cards" not in st.session_state:
+    st.session_state.p2_cards = [""] * 6
+
+# Smart dropdown filtering
+def get_available_cards(exclude_cards):
+    return [card for card in deck if card not in exclude_cards]
+
+# Player 1
+st.header("Player 1 Hand")
+cols1 = st.columns(6)
+p1_selected = []
+for i in range(6):
+    available_cards = get_available_cards(p1_selected + st.session_state.p2_cards)
+    st.session_state.p1_cards[i] = cols1[i].selectbox(
+        f"P1 Card {i+1}",
+        available_cards,
+        index=available_cards.index(st.session_state.p1_cards[i]) if st.session_state.p1_cards[i] in available_cards else 0
+    )
+    if st.session_state.p1_cards[i] != "":
+        p1_selected.append(st.session_state.p1_cards[i])
+
+if st.button("🎲 Randomize Player 1 Hand"):
+    st.session_state.p1_cards = random.sample(deck[1:], 6)
+    st.experimental_rerun()
+
+# Player 2
+st.header("Player 2 Hand")
+cols2 = st.columns(6)
+p2_selected = []
+for i in range(6):
+    available_cards = get_available_cards(p2_selected + st.session_state.p1_cards)
+    st.session_state.p2_cards[i] = cols2[i].selectbox(
+        f"P2 Card {i+1}",
+        available_cards,
+        index=available_cards.index(st.session_state.p2_cards[i]) if st.session_state.p2_cards[i] in available_cards else 0
+    )
+    if st.session_state.p2_cards[i] != "":
+        p2_selected.append(st.session_state.p2_cards[i])
+
+if st.button("🎲 Randomize Player 2 Hand"):
+    st.session_state.p2_cards = random.sample(deck[1:], 6)
+    st.experimental_rerun()
+
+# Board + Run
+st.header("Board")
 board_str = st.text_input("Partial Board (optional, e.g. Ah2s3c)", value="")
 
 num_sims = st.slider("Number of Simulations", min_value=1000, max_value=500_000, value=100_000, step=1000)
 
-if st.button("Run Simulation"):
+run_clicked = st.button("🚀 Run Simulation")
+reset_clicked = st.button("🔄 Reset Inputs")
+
+if reset_clicked:
+    st.session_state.p1_cards = [""] * 6
+    st.session_state.p2_cards = [""] * 6
+    st.experimental_rerun()
+
+if run_clicked:
     try:
-        # Parse inputs
+        # Parse hands
         player_hands_input = [
-            parse_hand_string(player1_hand_str),
-            parse_hand_string(player2_hand_str)
+            parse_hand_dropdowns(st.session_state.p1_cards),
+            parse_hand_dropdowns(st.session_state.p2_cards)
         ]
+
+        # Validate hands
+        for hand in player_hands_input:
+            if len(hand) not in [0, 6]:
+                raise ValueError("Each player hand must be either empty or exactly 6 unique cards.")
+
         board_input = parse_board_string(board_str)
 
         # Run simulation
