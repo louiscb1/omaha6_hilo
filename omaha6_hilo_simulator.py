@@ -1,141 +1,120 @@
-import random
 from card_utils import create_deck, shuffle_deck, deal_cards
 from hand_evaluator import evaluate_high_hand, evaluate_low_hand
 from itertools import combinations
-from tqdm import tqdm  # Progress bar
+from collections import Counter
 
-# Config
-NUM_PLAYERS = 2
-NUM_SIMULATIONS = 100_000  # You can scale this to 1_000_000 later
+NUM_SIMULATIONS = 10000
 
-# You can input specific player hands here (leave as None for random)
-# Example: PLAYER_HANDS = ["Ah2s3c4d5h6h", "AcAdAsAhKdKh"]
-PLAYER_HANDS = ["Ah2s3c4d5h6h", None]
+player1_hand = ["As", "2d", "3h", "4s", "5c", "6h"]
+player2_hand = ["Ah", "Kd", "Qh", "Jc", "9d", "8s"]
+partial_board = []
 
-# You can input partial board here (5 cards max). Example: BOARD_CARDS = ['Ah', 'Kd', 'Qc']
-BOARD_CARDS = []
+def qualifies_low(low_hand):
+    if low_hand is None:
+        return False
+    return all(card[0] in "2345678A" for card in low_hand) and len(set(c[0] for c in low_hand)) == 5
 
-# Initialize win counters
-high_wins = [0 for _ in range(NUM_PLAYERS)]
-low_wins = [0 for _ in range(NUM_PLAYERS)]
-scoops = [0 for _ in range(NUM_PLAYERS)]
+def is_nut_low(low_score):
+    return low_score == (5, 4, 3, 2, 1)
 
-# Helper to parse hand string like "Ah2s3c4d5h6h"
-def parse_hand_string(hand_str):
-    valid_ranks = "23456789TJQKA"
-    valid_suits = "cdhs"
+def run_simulation():
+    win_hi = [0, 0]
+    tie_hi = [0, 0]
+    win_lo = [0, 0]
+    tie_lo = [0, 0]
+    scoops = [0, 0]
+    equity = [0.0, 0.0]
+    nut_hi = [0, 0]
+    nut_lo = [0, 0]
 
-    # Split string into list of 2-char card codes
-    cards = [hand_str[i:i+2] for i in range(0, len(hand_str), 2)]
-
-    if len(cards) != 6:
-        raise ValueError("Each Omaha 6 hand must have exactly 6 cards (12 characters).")
-
-    # Check each card is valid
-    for card in cards:
-        if len(card) != 2 or card[0] not in valid_ranks or card[1] not in valid_suits:
-            raise ValueError(f"Invalid card format: '{card}'")
-
-    return cards
-
-# Sanity checker to catch duplicate cards
-def check_for_duplicate_cards(all_player_hands, board_cards):
-    seen = set()
-    for hand in all_player_hands:
-        for card in hand:
-            if card in seen:
-                raise ValueError(f"Duplicate card detected: {card}")
-            seen.add(card)
-    for card in board_cards:
-        if card in seen:
-            raise ValueError(f"Duplicate card detected between player hands and board: {card}")
-        seen.add(card)
-
-# Main simulation loop
-for sim in tqdm(range(NUM_SIMULATIONS)):
-    deck = create_deck()
-    shuffle_deck(deck)
-
-    # Deal player hands
-    player_hands = []
-    for i in range(NUM_PLAYERS):
-        if PLAYER_HANDS[i] is not None:
-            hand = parse_hand_string(PLAYER_HANDS[i])
-            # Remove specified cards from deck
-            for card in hand:
+    for _ in range(NUM_SIMULATIONS):
+        deck = create_deck()
+        known = player1_hand + player2_hand + partial_board
+        for card in known:
+            if card in deck:
                 deck.remove(card)
-            player_hands.append(hand)
-        else:
-            player_hand = deal_cards(deck, 6)
-            player_hands.append(player_hand)
+        shuffle_deck(deck)
 
-    # Copy board input
-    board = BOARD_CARDS.copy()
-    # Remove board cards from deck
-    for card in board:
-        deck.remove(card)
-    # Deal remaining board cards
-    num_to_deal = 5 - len(board)
-    if num_to_deal > 0:
-        board += deal_cards(deck, num_to_deal)
+        board = partial_board.copy()
+        board += deal_cards(deck, 5 - len(board))
 
-    # Run sanity check once on first sim
-    if sim == 0:
-        check_for_duplicate_cards(player_hands, board)
+        high_scores = []
+        low_scores = []
+        low_hands = []
 
-    # For each player, find best High and Low hand (2 hole + 3 board rule)
-    high_scores = []
-    low_scores = []
+        for hand in [player1_hand, player2_hand]:
+            best_high = None
+            best_low = None
+            best_low_hand = None
+            for hole in combinations(hand, 2):
+                for board3 in combinations(board, 3):
+                    full_hand = list(hole) + list(board3)
+                    hi = evaluate_high_hand(full_hand)
+                    lo = evaluate_low_hand(full_hand, board)
+                    if best_high is None or hi > best_high:
+                        best_high = hi
+                    if lo is not None:
+                        if best_low is None or lo < best_low:
+                            best_low = lo
+                            best_low_hand = full_hand
+            high_scores.append(best_high)
+            low_scores.append(best_low)
+            low_hands.append(best_low_hand)
 
-    for player_hand in player_hands:
-        hole_combos = combinations(player_hand, 2)
-        board_combos = combinations(board, 3)
+        max_high = max(high_scores)
+        high_winners = [i for i, s in enumerate(high_scores) if s == max_high]
+        for i in high_winners:
+            if len(high_winners) == 1:
+                win_hi[i] += 1
+            else:
+                tie_hi[i] += 1
 
-        best_high = None
-        best_low = None
+        low_winners = []
+        valid_lows = [s for s in low_scores if s is not None and qualifies_low(low_hands[i])]
+        if valid_lows:
+           min_low = min(valid_lows)
+           low_winners = [i for i, s in enumerate(low_scores) if s == min_low and qualifies_low(low_hands[i])]
+           for i in low_winners:
+              if len(low_winners) == 1:
+                 win_lo[i] += 1
+           else:
+                 tie_lo[i] += 1
 
-        for hole in hole_combos:
-            for board3 in board_combos:
-                full_hand = list(hole) + list(board3)
-                high_score = evaluate_high_hand(full_hand)
-                low_score = evaluate_low_hand(full_hand)
 
-                if (best_high is None) or (high_score > best_high):
-                    best_high = high_score
+        pot_share = [0.0, 0.0]
+        for i in high_winners:
+            pot_share[i] += 0.5 / len(high_winners)
+        if valid_lows:
+            for i in low_winners:
+                pot_share[i] += 0.5 / len(low_winners)
+        for i in [0, 1]:
+            equity[i] += pot_share[i]
 
-                if low_score is not None:
-                    if (best_low is None) or (low_score < best_low):
-                        best_low = low_score
+        for i in [0, 1]:
+            if len(high_winners) == 1 and len(low_winners) == 1:
+                if high_winners[0] == i and low_winners[0] == i:
+                    scoops[i] += 1
 
-        high_scores.append(best_high)
-        low_scores.append(best_low)
+        if high_scores[0] > high_scores[1]:
+            nut_hi[0] += 1
+        elif high_scores[1] > high_scores[0]:
+            nut_hi[1] += 1
+        if low_scores[0] and is_nut_low(low_scores[0]):
+            nut_lo[0] += 1
+        if low_scores[1] and is_nut_low(low_scores[1]):
+            nut_lo[1] += 1
 
-    # Determine High winner
-    max_high = max(high_scores)
-    high_winners = [i for i, score in enumerate(high_scores) if score == max_high]
-    for w in high_winners:
-        high_wins[w] += 1 / len(high_winners)
+    print("--- Simulation Results ---")
+    for i in [0, 1]:
+        print(f"Player {i+1}:")
+        print(f"  Win High %: {win_hi[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Tie High %: {tie_hi[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Win Low  %: {win_lo[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Tie Low  %: {tie_lo[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Scoop    %: {scoops[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Equity   %: {equity[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Nut High %: {nut_hi[i] / NUM_SIMULATIONS * 100:.2f}%")
+        print(f"  Nut Low  %: {nut_lo[i] / NUM_SIMULATIONS * 100:.2f}%")
 
-    # Determine Low winner (if any Low)
-    valid_lows = [score for score in low_scores if score is not None]
-    min_low = None  # Initialize
-    if valid_lows:
-        min_low = min(valid_lows)
-        low_winners = [i for i, score in enumerate(low_scores) if score == min_low]
-        for w in low_winners:
-            low_wins[w] += 1 / len(low_winners)
-
-    # Determine scoops (player who wins both High and Low alone)
-    for i in range(NUM_PLAYERS):
-        if min_low is not None and \
-           high_scores[i] == max_high and low_scores[i] == min_low and \
-           high_scores.count(max_high) == 1 and low_scores.count(min_low) == 1:
-            scoops[i] += 1
-
-# Print results
-print(f"\nResults after {NUM_SIMULATIONS:,} simulations:")
-for i in range(NUM_PLAYERS):
-    print(f"\nPlayer {i+1}:")
-    print(f"  High wins: {100 * high_wins[i] / NUM_SIMULATIONS:.2f}%")
-    print(f"  Low wins: {100 * low_wins[i] / NUM_SIMULATIONS:.2f}%")
-    print(f"  Scoops:    {100 * scoops[i] / NUM_SIMULATIONS:.2f}%")
+if __name__ == "__main__":
+    run_simulation()
