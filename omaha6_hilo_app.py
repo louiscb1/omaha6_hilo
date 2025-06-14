@@ -1,4 +1,4 @@
-# omaha6_hilo_app.py — Clickable Card Grid with Unicode Suits (Fixed Visuals)
+# omaha6_hilo_app.py — Full UI + Fast Simulation + Fixed Bar Chart
 import streamlit as st
 from card_utils import create_deck, shuffle_deck, deal_cards
 from hand_evaluator import evaluate_high_hand, evaluate_low_hand
@@ -7,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# --- Game Logic Helpers ---
+# --- Helpers ---
 def qualifies_low(hand):
     if hand is None:
         return False
@@ -16,33 +16,30 @@ def qualifies_low(hand):
 def is_nut_low(score):
     return score == (5, 4, 3, 2, 1)
 
-def parse_hand(cards):
-    return [card for card in cards if card]
-
 def card_to_unicode(card):
     suit_map = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
     return f"{card[0]}{suit_map.get(card[1], '')}"
 
+def percent(val):
+    return round(val * 100, 2)
+
 # --- Simulation Engine ---
 def run_simulation(p1, p2, board, num_sims):
-    win_hi = [0, 0]
-    tie_hi = [0, 0]
-    win_lo = [0, 0]
-    tie_lo = [0, 0]
-    scoops = [0, 0]
-    equity = [0.0, 0.0]
-    nut_hi = [0, 0]
-    nut_lo = [0, 0]
+    win_hi, tie_hi = [0, 0], [0, 0]
+    win_lo, tie_lo = [0, 0], [0, 0]
+    scoops, equity = [0, 0], [0.0, 0.0]
+    nut_hi, nut_lo = [0, 0], [0, 0]
     example_board = []
 
-    for _ in range(num_sims):
-        deck = create_deck()
-        known = p1 + p2 + board
-        for card in known:
-            if card in deck:
-                deck.remove(card)
-        shuffle_deck(deck)
+    base_deck = create_deck()
+    known = p1 + p2 + board
+    for card in known:
+        if card in base_deck:
+            base_deck.remove(card)
 
+    for _ in range(num_sims):
+        deck = base_deck[:]
+        shuffle_deck(deck)
         sim_board = board + deal_cards(deck, 5 - len(board))
         if not example_board:
             example_board = sim_board.copy()
@@ -75,8 +72,8 @@ def run_simulation(p1, p2, board, num_sims):
             else:
                 tie_hi[i] += 1
 
+        valid_lows = [s for s in lo_scores if s is not None and qualifies_low(lo_hands[lo_scores.index(s)])]
         lo_winners = []
-        valid_lows = [s for s in lo_scores if s is not None and qualifies_low(lo_hands[i])]
         if valid_lows:
             min_lo = min(valid_lows)
             lo_winners = [i for i, s in enumerate(lo_scores) if s == min_lo and qualifies_low(lo_hands[i])]
@@ -96,14 +93,14 @@ def run_simulation(p1, p2, board, num_sims):
             equity[i] += pot_share[i]
 
         for i in [0, 1]:
-            if len(hi_winners) == 1 and len(lo_winners) == 1:
-                if hi_winners[0] == i and lo_winners[0] == i:
-                    scoops[i] += 1
+            if len(hi_winners) == 1 and len(lo_winners) == 1 and hi_winners[0] == i and lo_winners[0] == i:
+                scoops[i] += 1
 
         if hi_scores[0] > hi_scores[1]:
             nut_hi[0] += 1
         elif hi_scores[1] > hi_scores[0]:
             nut_hi[1] += 1
+
         if lo_scores[0] and is_nut_low(lo_scores[0]):
             nut_lo[0] += 1
         if lo_scores[1] and is_nut_low(lo_scores[1]):
@@ -126,28 +123,25 @@ if "selected_area" not in st.session_state:
     st.session_state.p2_cards = []
     st.session_state.board_cards = []
 
-areas = ["P1", "P2", "Board"]
-st.radio("Assign cards to:", areas, key="selected_area", horizontal=True)
+st.radio("Assign cards to:", ["P1", "P2", "Board"], key="selected_area", horizontal=True)
 
 card_rows = "AKQJT98765432"
 suits = "shdc"
-suit_symbols = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
-
+symbols = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
 used = st.session_state.p1_cards + st.session_state.p2_cards + st.session_state.board_cards
 
 for r in card_rows:
     row = st.columns(4)
-    for j, s in enumerate(suits):
+    for i, s in enumerate(suits):
         card = r + s
-        label = f"{r}{suit_symbols[s]}"
-        disabled = card in used
-        if row[j].button(label, key=card, disabled=disabled):
-            target = st.session_state.selected_area
-            if target == "P1" and len(st.session_state.p1_cards) < 6:
+        label = f"{r}{symbols[s]}"
+        if row[i].button(label, key=card, disabled=card in used):
+            area = st.session_state.selected_area
+            if area == "P1" and len(st.session_state.p1_cards) < 6:
                 st.session_state.p1_cards.append(card)
-            elif target == "P2" and len(st.session_state.p2_cards) < 6:
+            elif area == "P2" and len(st.session_state.p2_cards) < 6:
                 st.session_state.p2_cards.append(card)
-            elif target == "Board" and len(st.session_state.board_cards) < 5:
+            elif area == "Board" and len(st.session_state.board_cards) < 5:
                 st.session_state.board_cards.append(card)
 
 st.markdown(f"**P1 Hand:** {' '.join(card_to_unicode(c) for c in st.session_state.p1_cards)}")
@@ -172,64 +166,58 @@ if st.button("Run Simulation"):
     st.subheader("Results")
     for i in [0, 1]:
         st.write(f"**Player {i+1}**")
-        st.write(f"Win High: {results['win_hi'][i] / num_sims * 100:.2f}%")
-        st.write(f"Tie High: {results['tie_hi'][i] / num_sims * 100:.2f}%")
-        st.write(f"Win Low:  {results['win_lo'][i] / num_sims * 100:.2f}%")
-        st.write(f"Tie Low:  {results['tie_lo'][i] / num_sims * 100:.2f}%")
-        st.write(f"Scoops:   {results['scoops'][i] / num_sims * 100:.2f}%")
-        st.write(f"Equity:   {results['equity'][i] / num_sims * 100:.2f}%")
-        st.write(f"Nut High: {results['nut_hi'][i] / num_sims * 100:.2f}%")
-        st.write(f"Nut Low:  {results['nut_lo'][i] / num_sims * 100:.2f}%")
+        st.write(f"Win High: {percent(results['win_hi'][i] / num_sims)}%")
+        st.write(f"Tie High: {percent(results['tie_hi'][i] / num_sims)}%")
+        st.write(f"Win Low:  {percent(results['win_lo'][i] / num_sims)}%")
+        st.write(f"Tie Low:  {percent(results['tie_lo'][i] / num_sims)}%")
+        st.write(f"Scoops:   {percent(results['scoops'][i] / num_sims)}%")
+        st.write(f"Equity:   {percent(results['equity'][i] / num_sims)}%")
+        st.write(f"Nut High: {percent(results['nut_hi'][i] / num_sims)}%")
+        st.write(f"Nut Low:  {percent(results['nut_lo'][i] / num_sims)}%")
 
-    # Bar Chart
     st.subheader("Bar Chart")
     labels = ["Win High", "Tie High", "Win Low", "Tie Low", "Scoops", "Equity"]
-    p1_vals = [results['win_hi'][0], results['tie_hi'][0], results['win_lo'][0],
-               results['tie_lo'][0], results['scoops'][0], results['equity'][0] * num_sims]
-    p2_vals = [results['win_hi'][1], results['tie_hi'][1], results['win_lo'][1],
-               results['tie_lo'][1], results['scoops'][1], results['equity'][1] * num_sims]
+    p1_vals = [percent(results['win_hi'][0] / num_sims), percent(results['tie_hi'][0] / num_sims),
+               percent(results['win_lo'][0] / num_sims), percent(results['tie_lo'][0] / num_sims),
+               percent(results['scoops'][0] / num_sims), percent(results['equity'][0] / num_sims)]
+    p2_vals = [percent(results['win_hi'][1] / num_sims), percent(results['tie_hi'][1] / num_sims),
+               percent(results['win_lo'][1] / num_sims), percent(results['tie_lo'][1] / num_sims),
+               percent(results['scoops'][1] / num_sims), percent(results['equity'][1] / num_sims)]
 
     fig, ax = plt.subplots()
     x = range(len(labels))
     width = 0.35
-    ax.bar([i - width/2 for i in x], [v/num_sims*100 for v in p1_vals], width, label="Player 1")
-    ax.bar([i + width/2 for i in x], [v/num_sims*100 for v in p2_vals], width, label="Player 2")
+    ax.bar([i - width/2 for i in x], p1_vals, width, label="Player 1")
+    ax.bar([i + width/2 for i in x], p2_vals, width, label="Player 2")
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("%")
+    ax.set_ylim(0, 100)
     ax.legend()
     st.pyplot(fig)
 
     st.subheader("Example Runout")
     st.markdown(" ".join(card_to_unicode(c) for c in results['example_board']))
 
-    # CSV Export
-    data = {
+    df = pd.DataFrame({
         "P1 Hand": [" ".join(st.session_state.p1_cards)],
         "P2 Hand": [" ".join(st.session_state.p2_cards)],
         "Board": [" ".join(st.session_state.board_cards)],
         "Simulations": [num_sims],
-        "P1 Win Hi %": [results['win_hi'][0] / num_sims * 100],
-        "P1 Tie Hi %": [results['tie_hi'][0] / num_sims * 100],
-        "P1 Win Lo %": [results['win_lo'][0] / num_sims * 100],
-        "P1 Tie Lo %": [results['tie_lo'][0] / num_sims * 100],
-        "P1 Scoops %": [results['scoops'][0] / num_sims * 100],
-        "P1 Equity %": [results['equity'][0] / num_sims * 100],
-        "P1 Nut Hi %": [results['nut_hi'][0] / num_sims * 100],
-        "P1 Nut Lo %": [results['nut_lo'][0] / num_sims * 100],
-        "P2 Win Hi %": [results['win_hi'][1] / num_sims * 100],
-        "P2 Tie Hi %": [results['tie_hi'][1] / num_sims * 100],
-        "P2 Win Lo %": [results['win_lo'][1] / num_sims * 100],
-        "P2 Tie Lo %": [results['tie_lo'][1] / num_sims * 100],
-        "P2 Scoops %": [results['scoops'][1] / num_sims * 100],
-        "P2 Equity %": [results['equity'][1] / num_sims * 100],
-        "P2 Nut Hi %": [results['nut_hi'][1] / num_sims * 100],
-        "P2 Nut Lo %": [results['nut_lo'][1] / num_sims * 100],
-    }
-    df = pd.DataFrame(data)
-    st.download_button(
-        "📥 Download CSV Results",
-        data=df.to_csv(index=False),
+        "P1 Win Hi %": [percent(results['win_hi'][0] / num_sims)],
+        "P1 Tie Hi %": [percent(results['tie_hi'][0] / num_sims)],
+        "P1 Win Lo %": [percent(results['win_lo'][0] / num_sims)],
+        "P1 Tie Lo %": [percent(results['tie_lo'][0] / num_sims)],
+        "P1 Scoops %": [percent(results['scoops'][0] / num_sims)],
+        "P1 Equity %": [percent(results['equity'][0])],
+        "P2 Win Hi %": [percent(results['win_hi'][1] / num_sims)],
+        "P2 Tie Hi %": [percent(results['tie_hi'][1] / num_sims)],
+        "P2 Win Lo %": [percent(results['win_lo'][1] / num_sims)],
+        "P2 Tie Lo %": [percent(results['tie_lo'][1] / num_sims)],
+        "P2 Scoops %": [percent(results['scoops'][1] / num_sims)],
+        "P2 Equity %": [percent(results['equity'][1])],
+    })
+
+    st.download_button("📥 Download CSV Results", data=df.to_csv(index=False),
         file_name=f"omaha6_sim_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv"
-    )
+        mime="text/csv")
