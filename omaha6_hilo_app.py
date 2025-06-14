@@ -6,57 +6,96 @@ import pandas as pd
 import io
 from datetime import datetime
 import matplotlib.pyplot as plt
+st.set_page_config(layout="wide")
 
-# Helper functions
-def parse_hand_dropdowns(selected_cards):
-    return [card for card in selected_cards if card != ""]
+ranks = "AKQJT98765432"
+suits = "shdc"
+full_deck = [r + s for s in suits for r in ranks]
 
-def parse_board_dropdowns(selected_cards):
-    return [card for card in selected_cards if card != ""]
+# Session state initialization
+if "p1_hand" not in st.session_state:
+    st.session_state.p1_hand = []
+if "p2_hand" not in st.session_state:
+    st.session_state.p2_hand = []
+if "board_cards" not in st.session_state:
+    st.session_state.board_cards = []
+if "selected_cards" not in st.session_state:
+    st.session_state.selected_cards = set()
+if "selection_target" not in st.session_state:
+    st.session_state.selection_target = "P1"
 
 def suit_to_emoji(card):
-    suit = card[1]
-    suit_map = {
-        's': '♠',
-        'h': '♥',
-        'd': '♦',
-        'c': '♣'
-    }
-    return card[0] + suit_map.get(suit, '')
+    suit_map = {'s': ('♠', 'black'), 'h': ('♥', 'red'), 'd': ('♦', 'red'), 'c': ('♣', 'black')}
+    symbol, color = suit_map[card[1]]
+    return f"<span style='color:{color}; font-weight:bold'>{card[0]}{symbol}</span>"
 
-def get_available_cards(selected_cards):
-    all_ranks = "23456789TJQKA"
-    all_suits = "shdc"
-    full_deck = [r + s for r in all_ranks for s in all_suits]
-    return [""] + [card for card in full_deck if card not in selected_cards]
+def render_card_selector():
+    st.subheader("Card Selector")
+    st.radio("Assign cards to:", ["P1", "P2", "Board"], key="selection_target")
+    for suit in suits:
+     cols = st.columns(13)
+     for idx, rank in enumerate(ranks):
+        card = rank + suit
+        label = f"{rank}♠" if suit == 's' else f"{rank}♥" if suit == 'h' else f"{rank}♦" if suit == 'd' else f"{rank}♣"
+        style = f"color: {'red' if suit in 'hd' else 'black'}; font-weight:bold"
 
-# Run Simulation function — TRUE 75% calculation
+        with cols[idx]:
+            if card in st.session_state.selected_cards:
+                st.markdown(f"<div style='{style}; opacity: 0.4'>{label}</div>", unsafe_allow_html=True)
+            else:
+                if st.button(label, key=card):
+                    assign_card(card)
+
+
+def assign_card(card):
+    target = st.session_state.selection_target
+    if target == "P1" and len(st.session_state.p1_hand) < 6:
+        st.session_state.p1_hand.append(card)
+    elif target == "P2" and len(st.session_state.p2_hand) < 6:
+        st.session_state.p2_hand.append(card)
+    elif target == "Board" and len(st.session_state.board_cards) < 5:
+        st.session_state.board_cards.append(card)
+    else:
+        return
+    st.session_state.selected_cards.add(card)
+
+def reset_inputs():
+    st.session_state.p1_hand = []
+    st.session_state.p2_hand = []
+    st.session_state.board_cards = []
+    st.session_state.selected_cards = set()
+
+# Main interface
+st.title("Omaha 6 HiLo Equity Calculator")
+render_card_selector()
+
+st.markdown("**P1 Hand:** " + " ".join([suit_to_emoji(c) for c in st.session_state.p1_hand]), unsafe_allow_html=True)
+st.markdown("**P2 Hand:** " + " ".join([suit_to_emoji(c) for c in st.session_state.p2_hand]), unsafe_allow_html=True)
+st.markdown("**Board:** " + " ".join([suit_to_emoji(c) for c in st.session_state.board_cards]), unsafe_allow_html=True)
+
+st.button("Reset Inputs", on_click=reset_inputs)
+
+st.header("Simulation Settings")
+num_sims = st.number_input("Number of Simulations", min_value=100, max_value=1000000, value=10000, step=1000)
+run_clicked = st.button("Run Simulation")
+
+
 def run_simulation(player_hands_input, board, num_simulations):
-    high_wins = [0, 0]
-    low_wins = [0, 0]
-    scoops = [0, 0]
-
-    split_pots = 0
-    seventyfive_pcts = [0, 0]
-
+    win_hi = [0, 0]
+    tie_hi = [0, 0]
+    win_lo = [0, 0]
+    tie_lo = [0, 0]
     example_board = []
 
     for _ in range(num_simulations):
         deck = create_deck()
-
-        # Remove known player cards and board cards from deck
         for card in player_hands_input[0] + player_hands_input[1] + board:
             if card in deck:
                 deck.remove(card)
-
         shuffle_deck(deck)
-
-        # Complete the board
-        num_to_deal = 5 - len(board)
         sim_board = board.copy()
-        if num_to_deal > 0:
-            sim_board += deal_cards(deck, num_to_deal)
-
+        if (5 - len(board)) > 0:
+            sim_board += deal_cards(deck, 5 - len(board))
         if not example_board:
             example_board = sim_board.copy()
 
@@ -64,197 +103,67 @@ def run_simulation(player_hands_input, board, num_simulations):
         low_scores = []
 
         for player_hand in player_hands_input:
-            # All combos of 2 hole cards
             hole_combos = combinations(player_hand, 2)
-            # All combos of 3 board cards
             board_combos = combinations(sim_board, 3)
-
-            best_high = None
-            best_low = None
-
+            best_high, best_low = None, None
             for hole in hole_combos:
                 for board3 in board_combos:
                     full_hand = list(hole) + list(board3)
                     high_score = evaluate_high_hand(full_hand)
                     low_score = evaluate_low_hand(full_hand, sim_board)
-
-                    if (best_high is None) or (high_score > best_high):
+                    if best_high is None or high_score > best_high:
                         best_high = high_score
                     if low_score is not None:
-                        if (best_low is None) or (low_score < best_low):
+                        if best_low is None or low_score < best_low:
                             best_low = low_score
-
             high_scores.append(best_high)
             low_scores.append(best_low)
 
-        # Determine High winner
         max_high = max(high_scores)
         high_winners = [i for i, score in enumerate(high_scores) if score == max_high]
-        for w in high_winners:
-            high_wins[w] += 1 / len(high_winners)
+        for i in high_winners:
+            if len(high_winners) == 1:
+                win_hi[i] += 1
+            else:
+                tie_hi[i] += 1
 
-        # Determine Low winner (if any Low)
-        valid_lows = [score for score in low_scores if score is not None]
+        valid_lows = [s for s in low_scores if s is not None]
         if valid_lows:
             min_low = min(valid_lows)
             low_winners = [i for i, score in enumerate(low_scores) if score == min_low]
-            for w in low_winners:
-                low_wins[w] += 1 / len(low_winners)
+            for i in low_winners:
+                if len(low_winners) == 1:
+                    win_lo[i] += 1
+                else:
+                    tie_lo[i] += 1
 
-        # Determine scoops (player who wins both High and Low alone)
-        for i in range(2):
-            if high_scores[i] == max_high and (low_scores[i] == min_low if valid_lows else True) and \
-               high_scores.count(max_high) == 1 and (low_scores.count(min_low) == 1 if valid_lows else True):
-                scoops[i] += 1
+    return win_hi, tie_hi, win_lo, tie_lo, example_board
 
-        # Determine Split Pot (P1 High and P2 Low) OR (P2 High and P1 Low)
-        if valid_lows:
-            if len(high_winners) == 1 and len(low_winners) == 1:
-                if (high_winners[0] == 0 and low_winners[0] == 1) or (high_winners[0] == 1 and low_winners[0] == 0):
-                    split_pots += 1
-
-        # TRUE 75% calculation:
-
-        # High pot share
-        high_pot_share = [0.0, 0.0]
-        if len(high_winners) > 0:
-            share = 1.0 / len(high_winners)
-            for w in high_winners:
-                high_pot_share[w] = share
-
-        # Low pot share
-        low_pot_share = [0.0, 0.0]
-        if valid_lows and len(low_winners) > 0:
-            share = 1.0 / len(low_winners)
-            for w in low_winners:
-                low_pot_share[w] = share
-
-        # Check 75% pot share per player
-        for i in range(2):
-            total_pot_share = high_pot_share[i] + low_pot_share[i]
-            if abs(total_pot_share - 0.75) < 1e-6:
-                seventyfive_pcts[i] += 1
-
-    return high_wins, low_wins, scoops, example_board, split_pots, seventyfive_pcts
-
-# Streamlit UI
-st.title("Omaha 6 HiLo Equity Calculator (PRO)")
-
-# Player 1 Hand
-st.header("Player 1 Hand")
-if "p1_cards" not in st.session_state:
-    st.session_state.p1_cards = [""] * 6
-
-cols_p1 = st.columns(6)
-p1_selected = []
-for i in range(6):
-    available_cards = get_available_cards(p1_selected + st.session_state.p2_cards + parse_board_dropdowns(st.session_state.board_cards) if "board_cards" in st.session_state else [])
-    st.session_state.p1_cards[i] = cols_p1[i].selectbox(
-        f"P1 Card {i+1}",
-        available_cards,
-        index=available_cards.index(st.session_state.p1_cards[i]) if st.session_state.p1_cards[i] in available_cards else 0
-    )
-    if st.session_state.p1_cards[i] != "":
-        p1_selected.append(st.session_state.p1_cards[i])
-
-# Player 2 Hand
-st.header("Player 2 Hand")
-if "p2_cards" not in st.session_state:
-    st.session_state.p2_cards = [""] * 6
-
-cols_p2 = st.columns(6)
-p2_selected = []
-for i in range(6):
-    available_cards = get_available_cards(p2_selected + st.session_state.p1_cards + parse_board_dropdowns(st.session_state.board_cards) if "board_cards" in st.session_state else [])
-    st.session_state.p2_cards[i] = cols_p2[i].selectbox(
-        f"P2 Card {i+1}",
-        available_cards,
-        index=available_cards.index(st.session_state.p2_cards[i]) if st.session_state.p2_cards[i] in available_cards else 0
-    )
-    if st.session_state.p2_cards[i] != "":
-        p2_selected.append(st.session_state.p2_cards[i])
-
-# Board input — Safe smart dropdowns (ONLY Board Card 1-3 shown!)
-st.header("Board")
-if "board_cards" not in st.session_state:
-    st.session_state.board_cards = [""] * 5  # Keep full list for engine compatibility
-
-cols_board = st.columns(3)
-board_selected = []
-for i in range(3):  # Only show first 3 cards in UI
-    available_cards = get_available_cards(board_selected + st.session_state.p1_cards + st.session_state.p2_cards)
-    st.session_state.board_cards[i] = cols_board[i].selectbox(
-        f"Board Card {i+1}",
-        available_cards,
-        index=available_cards.index(st.session_state.board_cards[i]) if st.session_state.board_cards[i] in available_cards else 0
-    )
-    if st.session_state.board_cards[i] != "":
-        board_selected.append(st.session_state.board_cards[i])
-
-# Check valid board input
-valid_board_input = len(board_selected) in [0, 3]
-
-# Show warning if invalid
-if not valid_board_input:
-    st.warning("Please select either 0 cards or exactly 3 board cards for runout simulation.")
-
-# Simulation Settings
-st.header("Simulation Settings")
-num_sims = st.number_input("Number of Simulations", min_value=100, max_value=1000000, value=10000, step=1000)
-
-# Run button — only enabled if valid input
-run_clicked = st.button("Run Simulation", disabled=not valid_board_input)
-
-# Reset button
-reset_clicked = st.button("Reset Inputs")
-
-if reset_clicked:
-    st.session_state.p1_cards = [""] * 6
-    st.session_state.p2_cards = [""] * 6
-    st.session_state.board_cards = [""] * 5
-# Run Simulation
 if run_clicked:
     try:
-        # Parse hands
-        player_hands_input = [
-            parse_hand_dropdowns(st.session_state.p1_cards),
-            parse_hand_dropdowns(st.session_state.p2_cards)
-        ]
-
-        # Validate hands
+        player_hands_input = [st.session_state.p1_hand, st.session_state.p2_hand]
         for hand in player_hands_input:
-            if len(hand) not in [0, 6]:
-                raise ValueError("Each player hand must be either empty or exactly 6 unique cards.")
+            if len(hand) != 6:
+                raise ValueError("Each player must have exactly 6 cards.")
+        board_input = st.session_state.board_cards
+        if len(board_input) not in [0, 3, 5]:
+            raise ValueError("Board must be 0, 3, or 5 cards.")
 
-        # Parse Board
-        board_input = parse_board_dropdowns(st.session_state.board_cards)
-        board_str = " ".join(board_input)
-
-        # Run simulation
         with st.spinner("Running simulations..."):
-            high_wins, low_wins, scoops, example_board, split_pots, seventyfive_pcts = run_simulation(player_hands_input, board_input, num_sims)
+            win_hi, tie_hi, win_lo, tie_lo, example_board = run_simulation(player_hands_input, board_input, num_sims)
 
-        # Display results
         st.subheader("Results")
         for i in range(2):
             st.write(f"**Player {i+1}:**")
-            st.write(f"High wins: {100 * high_wins[i] / num_sims:.2f}%")
-            st.write(f"Low wins: {100 * low_wins[i] / num_sims:.2f}%")
-            st.write(f"Scoops:    {100 * scoops[i] / num_sims:.2f}%")
+            st.write(f"Win High: {100 * win_hi[i] / num_sims:.2f}%")
+            st.write(f"Tie High: {100 * tie_hi[i] / num_sims:.2f}%")
+            st.write(f"Win Low:  {100 * win_lo[i] / num_sims:.2f}%")
+            st.write(f"Tie Low:  {100 * tie_lo[i] / num_sims:.2f}%")
 
-        # Display Split Pot %
-        split_pct = 100 * split_pots / num_sims
-        st.write(f"**Split Pot** (P1 wins High & P2 wins Low OR vice versa): {split_pct:.2f}%")
-
-        # Display TRUE 75% wins
-        for i in range(2):
-            st.write(f"**Player {i+1} wins 75% of pot:** {100 * seventyfive_pcts[i] / num_sims:.2f}%")
-
-        # Display bar chart of results
         st.subheader("Results Bar Chart")
-        labels = ["High Wins", "Low Wins", "Scoops"]
-        p1_values = [100 * high_wins[0] / num_sims, 100 * low_wins[0] / num_sims, 100 * scoops[0] / num_sims]
-        p2_values = [100 * high_wins[1] / num_sims, 100 * low_wins[1] / num_sims, 100 * scoops[1] / num_sims]
+        labels = ["Win High", "Tie High", "Win Low", "Tie Low"]
+        p1_values = [100 * win_hi[0] / num_sims, 100 * tie_hi[0] / num_sims, 100 * win_lo[0] / num_sims, 100 * tie_lo[0] / num_sims]
+        p2_values = [100 * win_hi[1] / num_sims, 100 * tie_hi[1] / num_sims, 100 * win_lo[1] / num_sims, 100 * tie_lo[1] / num_sims]
 
         x = range(len(labels))
         width = 0.35
@@ -265,46 +174,41 @@ if run_clicked:
 
         ax.set_ylabel('Percentage (%)')
         ax.set_title('Simulation Results')
-        ax.set_xticks(x)
+        ax.set_xticks(list(x))
         ax.set_xticklabels(labels)
         ax.legend()
 
         st.pyplot(fig)
 
-        # Show example board
-        st.subheader("Example Board from Simulation")
-        st.write(" ".join([suit_to_emoji(card) for card in example_board]))
+        st.subheader("Example Board")
+        st.markdown(" ".join([suit_to_emoji(card) for card in example_board]), unsafe_allow_html=True)
 
-        # Prepare CSV data
-        player1_hand_str = " ".join(parse_hand_dropdowns(st.session_state.p1_cards))
-        player2_hand_str = " ".join(parse_hand_dropdowns(st.session_state.p2_cards))
-
+        player1_hand_str = " ".join(st.session_state.p1_hand)
+        player2_hand_str = " ".join(st.session_state.p2_hand)
+        board_str = " ".join(board_input)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         data = {
             "Timestamp": [timestamp],
             "Player 1 Hand": [player1_hand_str],
             "Player 2 Hand": [player2_hand_str],
             "Board": [board_str],
             "Number of Simulations": [num_sims],
-            "P1 High Wins %": [100 * high_wins[0] / num_sims],
-            "P1 Low Wins %": [100 * low_wins[0] / num_sims],
-            "P1 Scoops %": [100 * scoops[0] / num_sims],
-            "P1 75% Wins %": [100 * seventyfive_pcts[0] / num_sims],
-            "P2 High Wins %": [100 * high_wins[1] / num_sims],
-            "P2 Low Wins %": [100 * low_wins[1] / num_sims],
-            "P2 Scoops %": [100 * scoops[1] / num_sims],
-            "P2 75% Wins %": [100 * seventyfive_pcts[1] / num_sims],
-            "Split Pot %": [split_pct],
+            "P1 Win High %": [100 * win_hi[0] / num_sims],
+            "P1 Tie High %": [100 * tie_hi[0] / num_sims],
+            "P1 Win Low %": [100 * win_lo[0] / num_sims],
+            "P1 Tie Low %": [100 * tie_lo[0] / num_sims],
+            "P2 Win High %": [100 * win_hi[1] / num_sims],
+            "P2 Tie High %": [100 * tie_hi[1] / num_sims],
+            "P2 Win Low %": [100 * win_lo[1] / num_sims],
+            "P2 Tie Low %": [100 * tie_lo[1] / num_sims]
         }
 
         df = pd.DataFrame(data)
-
-        # Convert to CSV
         csv_buffer = io.StringIO()
         df.to_csv(csv_buffer, index=False)
         csv_data = csv_buffer.getvalue()
 
-        # Download button
         st.download_button(
             label="📥 Save Results to CSV",
             data=csv_data,
