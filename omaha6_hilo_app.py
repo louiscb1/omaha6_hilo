@@ -1,4 +1,4 @@
-# omaha6_hilo_app.py (Updated)
+# omaha6_hilo_app.py — Clickable Card Grid with Unicode Suits (Fixed Visuals)
 import streamlit as st
 from card_utils import create_deck, shuffle_deck, deal_cards
 from hand_evaluator import evaluate_high_hand, evaluate_low_hand
@@ -7,16 +7,7 @@ from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# -- UI Helpers --
-def parse_hand(cards):
-    return [card for card in cards if card]
-
-def suit_to_emoji(card):
-    suit_map = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
-    color_map = {'s': 'black', 'c': 'black', 'h': 'red', 'd': 'red'}
-    return f"<span style='color:{color_map.get(card[1], 'black')}'>{card[0]}{suit_map.get(card[1], '')}</span>"
-
-# -- Game Rules --
+# --- Game Logic Helpers ---
 def qualifies_low(hand):
     if hand is None:
         return False
@@ -25,7 +16,14 @@ def qualifies_low(hand):
 def is_nut_low(score):
     return score == (5, 4, 3, 2, 1)
 
-# -- Simulation Engine --
+def parse_hand(cards):
+    return [card for card in cards if card]
+
+def card_to_unicode(card):
+    suit_map = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
+    return f"{card[0]}{suit_map.get(card[1], '')}"
+
+# --- Simulation Engine ---
 def run_simulation(p1, p2, board, num_sims):
     win_hi = [0, 0]
     tie_hi = [0, 0]
@@ -88,7 +86,6 @@ def run_simulation(p1, p2, board, num_sims):
                 else:
                     tie_lo[i] += 1
 
-        # Equity split
         pot_share = [0.0, 0.0]
         for i in hi_winners:
             pot_share[i] += 0.5 / len(hi_winners)
@@ -98,13 +95,11 @@ def run_simulation(p1, p2, board, num_sims):
         for i in [0, 1]:
             equity[i] += pot_share[i]
 
-        # Scoops
         for i in [0, 1]:
             if len(hi_winners) == 1 and len(lo_winners) == 1:
                 if hi_winners[0] == i and lo_winners[0] == i:
                     scoops[i] += 1
 
-        # Nut tracking
         if hi_scores[0] > hi_scores[1]:
             nut_hi[0] += 1
         elif hi_scores[1] > hi_scores[0]:
@@ -122,40 +117,57 @@ def run_simulation(p1, p2, board, num_sims):
         "example_board": example_board
     }
 
-# -- Streamlit UI --
+# --- Streamlit UI ---
 st.title("Omaha 6 HiLo Equity Calculator")
 
-# Store player hands and board in session state
-for key in ["p1_cards", "p2_cards", "board_cards"]:
-    if key not in st.session_state:
-        st.session_state[key] = [""] * (6 if "p" in key else 5)
+if "selected_area" not in st.session_state:
+    st.session_state.selected_area = "P1"
+    st.session_state.p1_cards = []
+    st.session_state.p2_cards = []
+    st.session_state.board_cards = []
 
-def get_card_pool():
-    ranks = "23456789TJQKA"
-    suits = "shdc"
-    return [r + s for r in ranks for s in suits]
+areas = ["P1", "P2", "Board"]
+st.radio("Assign cards to:", areas, key="selected_area", horizontal=True)
 
-def render_card_picker(label, card_state, opponent_cards, board_cards):
-    all_cards = get_card_pool()
-    selected_cards = opponent_cards + board_cards
-    st.markdown(f"**{label}**")
-    cols = st.columns(len(card_state))
-    for i in range(len(card_state)):
-        available = [""] + [c for c in all_cards if c not in selected_cards and c not in card_state if c != card_state[i]]
-        card_state[i] = cols[i].selectbox(f"{label} {i+1}", options=available, index=available.index(card_state[i]) if card_state[i] in available else 0)
+card_rows = "AKQJT98765432"
+suits = "shdc"
+suit_symbols = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'}
 
-render_card_picker("Player 1", st.session_state.p1_cards, st.session_state.p2_cards, st.session_state.board_cards)
-render_card_picker("Player 2", st.session_state.p2_cards, st.session_state.p1_cards, st.session_state.board_cards)
-render_card_picker("Board", st.session_state.board_cards, st.session_state.p1_cards + st.session_state.p2_cards, [])
+used = st.session_state.p1_cards + st.session_state.p2_cards + st.session_state.board_cards
+
+for r in card_rows:
+    row = st.columns(4)
+    for j, s in enumerate(suits):
+        card = r + s
+        label = f"{r}{suit_symbols[s]}"
+        disabled = card in used
+        if row[j].button(label, key=card, disabled=disabled):
+            target = st.session_state.selected_area
+            if target == "P1" and len(st.session_state.p1_cards) < 6:
+                st.session_state.p1_cards.append(card)
+            elif target == "P2" and len(st.session_state.p2_cards) < 6:
+                st.session_state.p2_cards.append(card)
+            elif target == "Board" and len(st.session_state.board_cards) < 5:
+                st.session_state.board_cards.append(card)
+
+st.markdown(f"**P1 Hand:** {' '.join(card_to_unicode(c) for c in st.session_state.p1_cards)}")
+st.markdown(f"**P2 Hand:** {' '.join(card_to_unicode(c) for c in st.session_state.p2_cards)}")
+st.markdown(f"**Board:** {' '.join(card_to_unicode(c) for c in st.session_state.board_cards)}")
+
+if st.button("Reset All"):
+    st.session_state.p1_cards = []
+    st.session_state.p2_cards = []
+    st.session_state.board_cards = []
 
 num_sims = st.number_input("# Simulations", 1000, 100000, 10000, step=1000)
 
 if st.button("Run Simulation"):
-    p1_hand = parse_hand(st.session_state.p1_cards)
-    p2_hand = parse_hand(st.session_state.p2_cards)
-    board_cards = parse_hand(st.session_state.board_cards)
-
-    results = run_simulation(p1_hand, p2_hand, board_cards, num_sims)
+    results = run_simulation(
+        st.session_state.p1_cards,
+        st.session_state.p2_cards,
+        st.session_state.board_cards,
+        num_sims
+    )
 
     st.subheader("Results")
     for i in [0, 1]:
@@ -169,7 +181,7 @@ if st.button("Run Simulation"):
         st.write(f"Nut High: {results['nut_hi'][i] / num_sims * 100:.2f}%")
         st.write(f"Nut Low:  {results['nut_lo'][i] / num_sims * 100:.2f}%")
 
-    # Chart
+    # Bar Chart
     st.subheader("Bar Chart")
     labels = ["Win High", "Tie High", "Win Low", "Tie Low", "Scoops", "Equity"]
     p1_vals = [results['win_hi'][0], results['tie_hi'][0], results['win_lo'][0],
@@ -188,15 +200,14 @@ if st.button("Run Simulation"):
     ax.legend()
     st.pyplot(fig)
 
-    # Board example
     st.subheader("Example Runout")
-    st.markdown(" ".join(suit_to_emoji(c) for c in results['example_board']), unsafe_allow_html=True)
+    st.markdown(" ".join(card_to_unicode(c) for c in results['example_board']))
 
     # CSV Export
     data = {
-        "P1 Hand": [" ".join(p1_hand)],
-        "P2 Hand": [" ".join(p2_hand)],
-        "Board": [" ".join(board_cards)],
+        "P1 Hand": [" ".join(st.session_state.p1_cards)],
+        "P2 Hand": [" ".join(st.session_state.p2_cards)],
+        "Board": [" ".join(st.session_state.board_cards)],
         "Simulations": [num_sims],
         "P1 Win Hi %": [results['win_hi'][0] / num_sims * 100],
         "P1 Tie Hi %": [results['tie_hi'][0] / num_sims * 100],
